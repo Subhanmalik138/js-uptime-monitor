@@ -40,7 +40,7 @@ function parseGlobal(argv) {
   return { dbPath, rest };
 }
 
-function main(argv) {
+async function main(argv) {
   const { dbPath, rest } = parseGlobal(argv);
   const [command, ...args] = rest;
   const store = new Store(dbPath);
@@ -62,16 +62,16 @@ function main(argv) {
     process.stderr.write(`Unknown command: ${command}\n\n${usage()}`);
     return 1;
   }
-  return handler(store, args);
+  return await handler(store, args);
 }
 
 if (require.main === module) {
-  try {
-    process.exitCode = main(process.argv.slice(2));
-  } catch (err) {
+  main(process.argv.slice(2)).then((code) => {
+    process.exitCode = code;
+  }).catch((err) => {
     process.stderr.write(`Error: ${err.message}\n`);
     process.exitCode = 1;
-  }
+  });
 }
 
 module.exports = { main, usage };
