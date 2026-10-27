@@ -4,6 +4,8 @@
 const { parseFlags, parseIntFlag } = require('./flags');
 const { addEndpoint, removeEndpoint, resolveEndpoint } = require('./registry');
 const { checkAll } = require('./checker');
+const { summarize, formatReport, toCsv } = require('./report');
+const fs = require('node:fs');
 
 function add(store, args) {
   const { flags, positionals } = parseFlags(args);
@@ -89,4 +91,54 @@ function history(store, args) {
   return 0;
 }
 
-module.exports = { add, remove, list, check, history };
+function report(store, args) {
+  const { flags } = parseFlags(args);
+  const days = flags.days === undefined ? null : parseIntFlag(flags.days, 'days', null);
+  const rows = summarize(store.load(), { days });
+  if (rows.length === 0) {
+    process.stdout.write('No endpoints registered. Use `add <url>` first.\n');
+    return 0;
+  }
+  process.stdout.write(formatReport(rows));
+  return 0;
+}
+
+async function watch(store, args) {
+  const { flags } = parseFlags(args);
+  const interval = parseIntFlag(flags.interval, 'interval', 60);
+  const concurrency = parseIntFlag(flags.concurrency, 'concurrency', 5);
+  process.stdout.write(`Watching every ${interval}s (Ctrl+C to stop)...\n`);
+  for (;;) {
+    const state = store.load();
+    if (state.endpoints.length === 0) {
+      process.stdout.write('No endpoints registered. Use `add <url>` first.\n');
+      return 0;
+    }
+    const results = await checkAll(state.endpoints, concurrency);
+    store.update((s) => { s.checks.push(...results); });
+    const up = results.filter((r) => r.status === 'up').length;
+    process.stdout.write(`[${new Date().toISOString()}] ${up}/${results.length} up\n`);
+    await new Promise((resolve) => { setTimeout(resolve, interval * 1000); });
+  }
+}
+
+function exportHistory(store, args) {
+  const { flags } = parseFlags(args);
+  const format = flags.format || 'json';
+  if (format !== 'json' && format !== 'csv') {
+    throw new Error('usage: export [--format json|csv] [--out <path>]');
+  }
+  const state = store.load();
+  const out = format === 'json'
+    ? JSON.stringify(state.checks, null, 2) + '\n'
+    : toCsv(state.checks);
+  if (flags.out) {
+    fs.writeFileSync(flags.out, out, 'utf8');
+    process.stdout.write(`Wrote ${state.checks.length} checks to ${flags.out}\n`);
+  } else {
+    process.stdout.write(out);
+  }
+  return 0;
+}
+
+module.exports = { add, remove, list, check, history, report, watch, export: exportHistory };
